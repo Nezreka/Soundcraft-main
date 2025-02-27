@@ -278,34 +278,32 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     const preset = get().timelinePresets.find(p => p.id === presetId);
     if (!preset) return;
     
-    // Preserve current tracks but add the preset tracks
+    // Replace the entire timeline with the preset timeline
     set(state => ({
       timeline: {
         ...state.timeline,
-        tracks: [
-          ...state.timeline.tracks,
-          ...preset.timeline.tracks.map(track => {
-            // Generate new IDs to avoid conflicts
-            const newTrackId = uuidv4();
-            return {
-              id: newTrackId,
-              soundId: track.soundId,
-              name: `Track ${state.timeline.tracks.length + 1}`,
-              color: getRandomColor(),
-              muted: false,
-              solo: false,
-              volume: 0.8,
-              pan: 0,
-              clips: track.clips.map(clip => ({
-                id: uuidv4(),
-                startTime: clip.startTime,
-                duration: clip.duration,
-                offset: clip.offset,
-              })),
-            } as TimelineTrack;
-          }),
-        ],
-        duration: Math.max(state.timeline.duration, preset.timeline.duration),
+        tracks: preset.timeline.tracks.map(track => {
+          // Generate new IDs to avoid conflicts
+          const newTrackId = uuidv4();
+          return {
+            id: newTrackId,
+            soundId: track.soundId,
+            name: `Track ${state.timeline.tracks.length + 1}`,
+            color: getRandomColor(),
+            muted: false,
+            solo: false,
+            volume: 0.8,
+            pan: 0,
+            clips: track.clips.map(clip => ({
+              id: uuidv4(),
+              startTime: clip.startTime,
+              duration: clip.duration,
+              offset: clip.offset,
+            })),
+          } as TimelineTrack;
+        }),
+        duration: preset.timeline.duration || 15,
+        currentTime: 0,
       }
     }));
   },
