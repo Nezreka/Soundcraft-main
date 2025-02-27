@@ -1,11 +1,13 @@
 // lib/audio/audioContext.ts
 
+import { AudioContextState } from '../../types/audio';
+
 // Singleton to ensure we only create one audio context
 class AudioContextManager {
   private static instance: AudioContextManager;
-  private _context: AudioContext;
-  private _masterGain: GainNode;
-  private _analyser: AnalyserNode;
+  private _context!: AudioContext;
+  private _masterGain!: GainNode;
+  private _analyser!: AnalyserNode;
   private _initialized: boolean = false;
   
   private constructor() {
@@ -57,14 +59,14 @@ class AudioContextManager {
       try {
         await this._context.resume();
         console.log(`🎵 AUDIO: Audio context resumed successfully, new state: ${this._context.state}`);
-        return this._context.state === 'running';
+        return this._context.state as string === 'running';
       } catch (error) {
         console.error("🎵 AUDIO: Failed to resume audio context:", error);
         return false;
       }
     } else {
       console.log(`🎵 AUDIO: Audio context already in state: ${this._context.state}`);
-      return this._context.state === 'running';
+      return this._context.state as string === 'running';
     }
   }
   
@@ -80,7 +82,7 @@ class AudioContextManager {
   
   // Get if the context is running
   public get isRunning(): boolean {
-    return this._initialized && this._context.state === 'running';
+    return this._initialized && this._context.state as string === 'running';
   }
   
   // Get the master gain node

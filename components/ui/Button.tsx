@@ -14,10 +14,12 @@ const buttonVariants = cva(
         neumorphic: "bg-surface shadow-neumorphic hover:shadow-neumorphic-inset text-text-primary",
         destructive: "bg-accent text-background hover:bg-accent/90",
         link: "bg-transparent underline-offset-4 hover:underline text-primary",
+        glass: "glass-panel border border-white/10 hover:bg-white/5 text-text-primary",
       },
       size: {
         default: "h-9 px-4 py-2",
         sm: "h-8 rounded-md px-3 text-xs",
+        xs: "h-6 rounded-md px-2 text-xs", // Extra small size
         lg: "h-10 rounded-md px-8",
         icon: "h-9 w-9",
       },

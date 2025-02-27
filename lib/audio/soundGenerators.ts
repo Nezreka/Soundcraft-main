@@ -6,7 +6,7 @@
 import { SoundParameters } from "@/types/audio";
 
 // Create a noise buffer for noise waveform
-export const createNoiseBuffer = (audioContext: AudioContext, duration: number) => {
+export const createNoiseBuffer = (audioContext: BaseAudioContext, duration: number) => {
   const sampleRate = audioContext.sampleRate;
   const bufferSize = sampleRate * duration;
   const buffer = audioContext.createBuffer(1, bufferSize, sampleRate);
@@ -21,7 +21,7 @@ export const createNoiseBuffer = (audioContext: AudioContext, duration: number) 
 
 // Create specialized sound sources based on sound type
 export function createSpecializedSource(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   sound: SoundParameters,
   now: number
 ) {
@@ -590,7 +590,7 @@ export function createSpecializedSource(
 
 // Create a simple impulse response for reverb
 export const createImpulseResponse = (
-  audioContext: AudioContext,
+  audioContext: BaseAudioContext,
   duration: number
 ) => {
   const sampleRate = audioContext.sampleRate;

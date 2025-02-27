@@ -5,16 +5,20 @@ interface SwitchProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label?: string;
+  description?: string;
   disabled?: boolean;
   size?: 'sm' | 'md' | 'lg';
+  title?: string;  // Add title prop for tooltip
 }
 
 const Switch: React.FC<SwitchProps> = ({
   checked,
   onChange,
   label,
+  description,
   disabled = false,
   size = 'md',
+  title,
 }) => {
   const handleClick = () => {
     if (!disabled) {
@@ -45,8 +49,15 @@ const Switch: React.FC<SwitchProps> = ({
       'flex items-center gap-2',
       disabled && 'opacity-50 cursor-not-allowed'
     )}>
-      {label && (
-        <span className="text-sm text-text-secondary">{label}</span>
+      {(label || description) && (
+        <div className="flex flex-col">
+          {label && (
+            <span className="text-sm text-text-secondary">{label}</span>
+          )}
+          {description && (
+            <span className="text-xs text-text-secondary/70">{description}</span>
+          )}
+        </div>
       )}
       
       <button
@@ -55,6 +66,7 @@ const Switch: React.FC<SwitchProps> = ({
         aria-checked={checked}
         disabled={disabled}
         onClick={handleClick}
+        title={title}
         className={cn(
           'relative inline-flex shrink-0 cursor-pointer rounded-full transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',

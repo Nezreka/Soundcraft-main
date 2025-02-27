@@ -13,6 +13,8 @@ const Slider: React.FC<SliderProps> = ({
   unit = '',
   vertical = false,
   bipolar = false,
+  showValueAsPercentage = false,
+  className = '',
 }) => {
   const sliderRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -25,10 +27,19 @@ const Slider: React.FC<SliderProps> = ({
   // Format the display value
   const displayValue = () => {
     let val = Number(value.toFixed(2));
+    
+    // Handle showValueAsPercentage option
+    if (showValueAsPercentage) {
+      // Convert to percentage (0-100%)
+      const percent = Math.round(((val - min) / (max - min)) * 100);
+      return `${percent}${unit}`;
+    }
+    
     if (bipolar) {
       // For bipolar controls, show + sign for positive values
       return `${val > 0 ? '+' : ''}${val}${unit}`;
     }
+    
     return `${val}${unit}`;
   };
 
@@ -108,9 +119,10 @@ const Slider: React.FC<SliderProps> = ({
   return (
     <div className={cn(
       'flex gap-2',
-      vertical ? 'flex-col h-32' : 'flex-row items-center'
+      vertical ? 'flex-col h-32' : 'flex-row items-center',
+      className
     )}>
-      <div className="text-xs text-text-secondary">{label}</div>
+      {label && <div className="text-xs text-text-secondary">{label}</div>}
       
       <div 
         ref={sliderRef}

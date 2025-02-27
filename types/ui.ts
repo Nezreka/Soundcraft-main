@@ -1,6 +1,6 @@
 export interface ModalProps {
     isOpen: boolean;
-    onClose: () => void;
+    onClose: (() => void) | undefined;  // Allow onClose to be undefined
     title: string;
     children: React.ReactNode;
     preventOutsideClose?: boolean;
@@ -31,6 +31,8 @@ export interface ModalProps {
     unit?: string;
     vertical?: boolean;
     bipolar?: boolean;
+    showValueAsPercentage?: boolean;
+    className?: string;  // Add className for custom styling
   };
   
   export type TabItem = {

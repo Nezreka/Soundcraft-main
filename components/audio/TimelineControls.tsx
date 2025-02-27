@@ -284,8 +284,9 @@ const TimelineControls: React.FC = () => {
     <>
       <div className="flex items-center gap-2 flex-wrap">
         {/* Add sound button - most important action */}
+        {/* Using default variant which has primary styling */}
         <Button 
-          variant="primary" 
+          variant="default"
           onClick={() => setAddSoundModalOpen(true)}
           className="flex items-center"
         >

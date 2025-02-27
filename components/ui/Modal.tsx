@@ -16,7 +16,7 @@ const Modal: React.FC<ModalProps> = ({
   // Close on escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape' && isOpen && onClose) {
         onClose();
       }
     };
@@ -27,7 +27,7 @@ const Modal: React.FC<ModalProps> = ({
 
   // Handle click outside
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === overlayRef.current && !preventOutsideClose) {
+    if (e.target === overlayRef.current && !preventOutsideClose && onClose) {
       onClose();
     }
   };
@@ -55,13 +55,15 @@ const Modal: React.FC<ModalProps> = ({
           >
             <div className="flex items-center justify-between p-4 border-b border-white/10">
               <h2 className="text-xl font-semibold text-primary">{title}</h2>
-              <button
-                onClick={onClose}
-                className="p-1 rounded-full hover:bg-white/10 transition-colors"
-                aria-label="Close modal"
-              >
-                <IoMdClose size={24} />
-              </button>
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  className="p-1 rounded-full hover:bg-white/10 transition-colors"
+                  aria-label="Close modal"
+                >
+                  <IoMdClose size={24} />
+                </button>
+              )}
             </div>
             <div className="p-4 overflow-auto">{children}</div>
           </motion.div>

@@ -68,7 +68,7 @@ const AddSoundModal: React.FC<AddSoundModalProps> = ({ isOpen, onClose }) => {
           
           <div className="flex flex-wrap gap-2">
             <Button
-              variant={selectedType === 'All' ? 'primary' : 'secondary'}
+              variant={selectedType === 'All' ? 'default' : 'secondary'}
               size="sm"
               onClick={() => setSelectedType('All')}
             >
@@ -78,7 +78,7 @@ const AddSoundModal: React.FC<AddSoundModalProps> = ({ isOpen, onClose }) => {
             {soundTypes.map(type => (
               <Button
                 key={type}
-                variant={selectedType === type ? 'primary' : 'secondary'}
+                variant={selectedType === type ? 'default' : 'secondary'}
                 size="sm"
                 onClick={() => setSelectedType(type)}
               >

@@ -20,6 +20,9 @@ export type SoundType =
 // Update to include 'noise' as a waveform type
 export type WaveformType = 'sine' | 'square' | 'sawtooth' | 'triangle' | 'noise';
 
+// Audio context state type
+export type AudioContextState = 'suspended' | 'running' | 'closed';
+
 export interface SoundParameters {
   id: string;
   type: SoundType;

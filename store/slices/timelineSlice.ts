@@ -35,10 +35,6 @@ export interface TimelineSlice {
   
   // Timeline visibility
   toggleTimelineVisibility: () => void;
-  
-  // Sound filtering for timeline
-  filterSoundsByType: (type: string | null) => SoundParameters[];
-  filterSoundsByName: (name: string) => SoundParameters[];
 }
 
 const initialTimelineState: TimelineState = {
@@ -321,23 +317,8 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     console.log("Timeline visibility toggled");
   },
   
-  // Sound filtering for timeline
-  filterSoundsByType: (type) => {
-    const sounds = get().sounds;
-    if (!type) return sounds;
-    
-    return sounds.filter(sound => sound.type === type);
-  },
-  
-  filterSoundsByName: (name) => {
-    const sounds = get().sounds;
-    if (!name.trim()) return sounds;
-    
-    const lowercaseName = name.toLowerCase();
-    return sounds.filter(sound => 
-      sound.name.toLowerCase().includes(lowercaseName)
-    );
-  },
+  // Timeline visibility implementation
+  // No filter methods as they were removed from the interface
 });
 
 // Helper function to generate random colors for tracks

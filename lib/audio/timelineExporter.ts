@@ -422,8 +422,8 @@ function normalizeAudioBuffer(buffer: AudioBuffer, targetAmplitude: number = 0.7
  */
 async function encodeAudioFormat(
   buffer: AudioBuffer, 
-  format: 'wav' | 'mp3',
-  quality: number
+  format: 'wav' | 'mp3' | 'ogg',
+  quality: number = 0.8
 ): Promise<Blob> {
   if (format === 'wav') {
     return encodeWAV(buffer);
@@ -431,6 +431,10 @@ async function encodeAudioFormat(
     // Note: MP3 encoding would require a library like lamejs
     // For now, we'll just use WAV format
     console.warn("MP3 encoding not implemented, using WAV instead");
+    return encodeWAV(buffer);
+  } else if (format === 'ogg') {
+    // Ogg format is not implemented yet
+    console.warn("OGG encoding not implemented, using WAV instead");
     return encodeWAV(buffer);
   }
   
