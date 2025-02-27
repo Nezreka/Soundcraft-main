@@ -36,7 +36,24 @@ class SoundClip {
   
   // Play the sound using the specialized sound generators
   play(audioContext: AudioContext, outputNode: AudioNode, currentTime: number) {
-    console.log(`🔊 SOUND: Playing clip ${this.id}, type: ${this.soundParams.type || 'unknown'}, waveform: ${this.soundParams.waveform}`);
+    console.log(`🔊 SOUND: Playing clip ${this.id}, 
+      type: ${this.soundParams.type || 'unknown'}, 
+      waveform: ${this.soundParams.waveform}, 
+      pitch: ${this.soundParams.pitch}`);
+    
+    // Debug the sound parameters to understand what's happening
+    console.log(`🔊 SOUND PARAMS: ${JSON.stringify({
+      type: this.soundParams.type,
+      waveform: this.soundParams.waveform,
+      pitch: this.soundParams.pitch,
+      volume: this.soundParams.volume,
+      attack: this.soundParams.attack,
+      decay: this.soundParams.decay,
+      sustain: this.soundParams.sustain,
+      release: this.soundParams.release,
+      filterType: this.soundParams.filterType,
+      filterCutoff: this.soundParams.filterCutoff
+    }, null, 2)}`);
     
     // Stop if already playing
     if (this.isPlaying) {
@@ -49,102 +66,55 @@ class SoundClip {
       this.gainNode = audioContext.createGain();
       this.panNode = audioContext.createStereoPanner();
       
-      // Set volume and pan based on both sound and track parameters
-      this.gainNode.gain.value = this.soundParams.volume * this.trackVolume;
+      // Set pan based on track parameters
       this.panNode.pan.value = this.trackPan;
       
-      // Connect nodes
+      // Connect gain node to pan node to output - establish full audio path
       this.gainNode.connect(this.panNode);
       this.panNode.connect(outputNode);
       
-      // Generate appropriate sound source based on waveform
-      if (this.soundParams.waveform === 'noise') {
-        // Create noise source
-        const noiseBuffer = this.createNoiseBuffer(audioContext, this.duration);
-        const noiseSource = audioContext.createBufferSource();
-        noiseSource.buffer = noiseBuffer;
-        
-        // Connect and start
-        noiseSource.connect(this.gainNode);
-        noiseSource.start();
-        
-        // Only set stop time if duration is reasonable
-        if (this.duration > 0.1) {
-          noiseSource.stop(audioContext.currentTime + this.duration);
-        }
-        
-        this.sourceNode = noiseSource;
-        console.log(`🔊 SOUND: Started noise source for clip ${this.id}, duration: ${this.duration}s`);
-      } else {
-        // Create oscillator with appropriate type
-        const oscillator = audioContext.createOscillator();
-        
-        // Make sure waveform is a valid OscillatorType
-        try {
-          oscillator.type = (this.soundParams.waveform as OscillatorType) || 'sine';
-        } catch (e) {
-          console.log(`🔊 SOUND: Invalid waveform type, defaulting to sine`);
-          oscillator.type = 'sine';
-        }
-        
-        // Set frequency based on pitch (A4 = 440Hz, each semitone is a factor of 2^(1/12))
-        oscillator.frequency.value = 440 * Math.pow(2, (this.soundParams.pitch || 0) / 12);
-        console.log(`🔊 SOUND: Oscillator frequency: ${oscillator.frequency.value.toFixed(2)} Hz`);
-        
-        // Apply envelope for more realistic sound
-        if (this.gainNode) {
-          const now = audioContext.currentTime;
-          const attack = Math.max(0.005, this.soundParams.attack || 0.01);
-          const decay = Math.max(0.01, this.soundParams.decay || 0.1);
-          const sustain = this.soundParams.sustain !== undefined ? this.soundParams.sustain : 0.7;
-          const release = Math.max(0.01, this.soundParams.release || 0.3);
-          
-          // Start with zero gain
-          this.gainNode.gain.setValueAtTime(0, now);
-          
-          // Attack phase - linear ramp to full volume
-          this.gainNode.gain.linearRampToValueAtTime(
-            this.soundParams.volume * this.trackVolume, 
-            now + attack
-          );
-          
-          // Decay phase - linear ramp to sustain level
-          this.gainNode.gain.linearRampToValueAtTime(
-            this.soundParams.volume * this.trackVolume * sustain,
-            now + attack + decay
-          );
-          
-          // Determine when to start release
-          const releaseStart = now + attack + decay;
-          
-          // Release phase - linear ramp to zero
-          this.gainNode.gain.linearRampToValueAtTime(
-            0,
-            releaseStart + release
-          );
-          
-          console.log(`🔊 SOUND: ADSR envelope: a=${attack}s, d=${decay}s, s=${sustain}, r=${release}s`);
-        }
-        
-        // Connect and start the oscillator
-        oscillator.connect(this.gainNode);
-        oscillator.start();
-        
-        // Ensure a reasonable duration for the sound
-        const effectiveDuration = Math.max(0.5, this.duration);
-        oscillator.stop(audioContext.currentTime + effectiveDuration);
-        
-        this.sourceNode = oscillator;
-        console.log(`🔊 SOUND: Started oscillator for clip ${this.id}, type: ${oscillator.type}, freq: ${oscillator.frequency.value}Hz`);
+      // Debug audio path
+      console.log(`🔊 SOUND: Audio path established: Source -> GainNode -> PanNode -> OutputNode`);
+      
+      // Use our specialized sound creation based on sound type
+      const specializedSound = createSpecializedSound(
+        audioContext,
+        this.gainNode,
+        this.soundParams,
+        currentTime
+      );
+      
+      // Store the main source
+      this.sourceNode = specializedSound.source;
+      
+      // Store any additional sources
+      const additionalSources = specializedSound.additionalSources || [];
+      
+      // Double-check the gain is properly set
+      if (this.gainNode) {
+        console.log(`🔊 SOUND: Making sure gain is set, current: ${this.gainNode.gain.value}`);
+        this.gainNode.gain.value = this.soundParams.volume * this.trackVolume;
+        console.log(`🔊 SOUND: Updated gain value: ${this.gainNode.gain.value}`);
       }
       
+      // Set playing state
       this.isPlaying = true;
       
-      // Auto-stop when done (use a slightly longer timeout to ensure all processing completes)
-      const stopTimeout = Math.max(0.5, this.duration) * 1000 + 100;
+      // Auto-stop when done - use a longer timeout for good measure
+      const stopTimeout = Math.max(1.0, this.duration) * 1000 + 100;
       setTimeout(() => {
         console.log(`🔊 SOUND: Auto-stopping clip ${this.id} after ${stopTimeout/1000} seconds`);
         this.stop();
+        
+        // Also stop any additional sources
+        additionalSources.forEach(source => {
+          try {
+            source.stop();
+            source.disconnect();
+          } catch (e) {
+            // Ignore errors if already stopped
+          }
+        });
       }, stopTimeout);
       
       return true;
@@ -212,6 +182,428 @@ class SoundClip {
   }
 }
 
+// Import default sound profiles at module level to avoid awaits in function
+import { DEFAULT_SOUND_PROFILES } from '@/lib/audio/defaultSounds';
+
+// Helper function to create specialized sound sources like in useAudioNode
+function createSpecializedSound(
+  audioContext: AudioContext, 
+  gainNode: GainNode, 
+  soundParams: any, 
+  currentTime: number
+) {
+  const now = audioContext.currentTime;
+  const soundType = soundParams.type || soundParams.name;
+  
+  console.log(`🔊 SOUND: Creating specialized sound type: ${soundType}`);
+  
+  // Create a filter for the sound
+  const filter = audioContext.createBiquadFilter();
+  filter.type = soundParams.filterType as BiquadFilterType || 'lowpass';
+  filter.frequency.value = soundParams.filterCutoff || 1000;
+  filter.Q.value = soundParams.filterResonance || 1;
+  
+  // Bass Kick specialized sound
+  if (soundType === 'Bass Kick' || soundType?.toLowerCase().includes('kick')) {
+    console.log(`🔊 SOUND: Creating specialized Bass Kick sound`);
+    
+    // Create oscillator for the kick drum
+    const oscillator = audioContext.createOscillator();
+    oscillator.type = 'sine'; // Kick drums typically use sine waves
+    
+    // Calculate frequencies based on pitch
+    const pitchMultiplier = Math.pow(2, (soundParams.pitch || 0) / 12);
+    const baseFreq = 40 * pitchMultiplier; // Base frequency for the body
+    const clickFreq = 160 * pitchMultiplier; // Higher frequency for the "click"
+    
+    // Start with the click frequency
+    oscillator.frequency.setValueAtTime(clickFreq, now);
+    
+    // Quick drop to the base frequency for the characteristic kick sound
+    oscillator.frequency.exponentialRampToValueAtTime(baseFreq, now + 0.03);
+    
+    // Set initial volume directly to ensure it's loud enough
+    gainNode.gain.value = soundParams.volume || 0.8;
+    
+    // Then set up the amplitude envelope - start at zero
+    gainNode.gain.setValueAtTime(0, now);
+    
+    // Quick attack to full volume
+    gainNode.gain.linearRampToValueAtTime(
+      soundParams.volume || 0.8, 
+      now + 0.01
+    );
+    
+    // Decay to sustain level
+    gainNode.gain.linearRampToValueAtTime(
+      (soundParams.volume || 0.8) * 0.2, 
+      now + 0.1
+    );
+    
+    // Final decay to silence
+    gainNode.gain.linearRampToValueAtTime(
+      0.001,
+      now + 0.5 // A bit longer for kick tail
+    );
+    
+    // Connect oscillator directly to gain node for simplicity
+    oscillator.connect(gainNode);
+    
+    // Start the oscillator
+    oscillator.start(now);
+    oscillator.stop(now + 0.5); // Half-second is enough for a kick
+    
+    return {
+      source: oscillator,
+      filter: filter
+    };
+  }
+  
+  // Bass/Sub Bass specialized sound
+  else if (soundType === 'Bass' || soundType === 'Bass Synth' || soundType === 'Sub Bass' || 
+          soundType?.toLowerCase().includes('bass')) {
+    console.log(`🔊 SOUND: Creating specialized Bass sound`);
+    
+    // Create main oscillator
+    const oscillator = audioContext.createOscillator();
+    oscillator.type = (soundParams.waveform as OscillatorType) || 'sine';
+    
+    // Calculate base frequency - use a lower octave for bass
+    const baseFreq = 55 * Math.pow(2, (soundParams.pitch || 0) / 12); // A1 (55Hz)
+    oscillator.frequency.value = baseFreq;
+    
+    // Create a sub-oscillator one octave lower for thickness
+    const subOsc = audioContext.createOscillator();
+    subOsc.type = 'sine'; // Always sine for sub
+    subOsc.frequency.value = baseFreq / 2; // One octave lower
+    
+    // Create a gain for the sub oscillator
+    const subGain = audioContext.createGain();
+    subGain.gain.value = 0.5; // Half volume for the sub
+    
+    // Set up the amplitude envelope
+    gainNode.gain.setValueAtTime(0, now);
+    
+    // Attack
+    gainNode.gain.linearRampToValueAtTime(
+      soundParams.volume || 0.8,
+      now + (soundParams.attack || 0.05)
+    );
+    
+    // Decay to sustain
+    gainNode.gain.linearRampToValueAtTime(
+      (soundParams.volume || 0.8) * (soundParams.sustain || 0.8),
+      now + (soundParams.attack || 0.05) + (soundParams.decay || 0.1)
+    );
+    
+    // Connect oscillators directly to gain node
+    oscillator.connect(gainNode);
+    subOsc.connect(subGain);
+    subGain.connect(gainNode);
+    
+    // Start oscillators
+    oscillator.start(now);
+    subOsc.start(now);
+    
+    // Use the effective duration from the sound
+    const duration = Math.max(0.5, soundParams.duration || 1.0);
+    
+    oscillator.stop(now + duration);
+    subOsc.stop(now + duration);
+    
+    return {
+      source: oscillator,
+      additionalSources: [subOsc],
+      filter: filter
+    };
+  }
+  
+  // Percussion specialized sound
+  else if (soundType === 'Percussion' || soundType === 'Clap' || soundType === 'Snare') {
+    console.log(`🔊 SOUND: Creating specialized Percussion sound`);
+    
+    // For percussion, use noise + tone
+    // Create noise buffer
+    const sampleRate = audioContext.sampleRate;
+    const bufferSize = sampleRate * (soundParams.duration || 0.5);
+    const noiseBuffer = audioContext.createBuffer(1, bufferSize, sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    
+    // Fill with noise
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    
+    // Create noise source
+    const noiseSource = audioContext.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    
+    // Create tone oscillator for body
+    const toneOsc = audioContext.createOscillator();
+    toneOsc.type = 'triangle';
+    toneOsc.frequency.value = 180 * Math.pow(2, (soundParams.pitch || 0) / 12);
+    
+    // Create separate gains for mixing
+    const noiseGain = audioContext.createGain();
+    const toneGain = audioContext.createGain();
+    
+    // Set gains for mixing
+    noiseGain.gain.value = 0.7;
+    toneGain.gain.value = 0.3;
+    
+    // Set envelope for percussion
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(soundParams.volume || 0.8, now + 0.01);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + (soundParams.duration || 0.3));
+    
+    // Connect everything directly to gain node
+    noiseSource.connect(gainNode);
+    toneOsc.connect(toneGain);
+    toneGain.connect(gainNode);
+    
+    // Start sources
+    noiseSource.start(now);
+    toneOsc.start(now);
+    
+    const duration = Math.max(0.1, soundParams.duration || 0.3);
+    
+    noiseSource.stop(now + duration);
+    toneOsc.stop(now + duration);
+    
+    return {
+      source: noiseSource,
+      additionalSources: [toneOsc],
+      filter: filter
+    };
+  }
+  
+  // Synth/Lead specialized sound
+  else if (soundType === 'Synth' || soundType === 'Lead Synth') {
+    console.log(`🔊 SOUND: Creating specialized Synth sound`);
+    
+    // Create oscillator
+    const oscillator = audioContext.createOscillator();
+    oscillator.type = (soundParams.waveform as OscillatorType) || 'sawtooth';
+    
+    // Base frequency (A4 = 440Hz)
+    const baseFreq = 440 * Math.pow(2, (soundParams.pitch || 0) / 12);
+    oscillator.frequency.value = baseFreq;
+    
+    // For richer sound, add a detuned oscillator
+    const detuneOsc = audioContext.createOscillator();
+    detuneOsc.type = oscillator.type;
+    detuneOsc.frequency.value = baseFreq * 1.005; // Slightly detuned
+    
+    const detuneGain = audioContext.createGain();
+    detuneGain.gain.value = 0.3;
+    
+    // Set envelope
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(
+      soundParams.volume || 0.8, 
+      now + (soundParams.attack || 0.05)
+    );
+    gainNode.gain.linearRampToValueAtTime(
+      (soundParams.volume || 0.8) * (soundParams.sustain || 0.7),
+      now + (soundParams.attack || 0.05) + (soundParams.decay || 0.1)
+    );
+    
+    // Connect oscillators directly to gain node
+    oscillator.connect(gainNode);
+    detuneOsc.connect(detuneGain);
+    detuneGain.connect(gainNode);
+    
+    // Start oscillators
+    oscillator.start(now);
+    detuneOsc.start(now);
+    
+    const duration = Math.max(0.5, soundParams.duration || 1.0);
+    
+    oscillator.stop(now + duration);
+    detuneOsc.stop(now + duration);
+    
+    return {
+      source: oscillator,
+      additionalSources: [detuneOsc],
+      filter: filter
+    };
+  }
+  
+  // Ambient/Pad specialized sound
+  else if (soundType === 'Pad' || soundType === 'Ambient') {
+    console.log(`🔊 SOUND: Creating specialized Ambient/Pad sound`);
+    
+    // Create multiple oscillators for richness
+    const oscillator1 = audioContext.createOscillator();
+    const oscillator2 = audioContext.createOscillator();
+    const oscillator3 = audioContext.createOscillator();
+    
+    oscillator1.type = (soundParams.waveform as OscillatorType) || 'triangle';
+    oscillator2.type = oscillator1.type;
+    oscillator3.type = oscillator1.type;
+    
+    // Set frequencies with detuning for chorus-like effect
+    const baseFreq = 220 * Math.pow(2, (soundParams.pitch || 0) / 12); // A3
+    oscillator1.frequency.value = baseFreq;
+    oscillator2.frequency.value = baseFreq * 1.002; // Slightly detuned
+    oscillator3.frequency.value = baseFreq * 0.997; // Slightly detuned
+    
+    // Create individual gains for mixing
+    const gain1 = audioContext.createGain();
+    const gain2 = audioContext.createGain();
+    const gain3 = audioContext.createGain();
+    
+    gain1.gain.value = 0.5;
+    gain2.gain.value = 0.3;
+    gain3.gain.value = 0.3;
+    
+    // Slow attack and release for pads
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(
+      soundParams.volume || 0.6,
+      now + Math.max(0.5, soundParams.attack || 0.8)
+    );
+    
+    // Connect oscillators directly to gain node through individual gains
+    oscillator1.connect(gain1);
+    oscillator2.connect(gain2);
+    oscillator3.connect(gain3);
+    
+    gain1.connect(gainNode);
+    gain2.connect(gainNode);
+    gain3.connect(gainNode);
+    
+    // Start oscillators
+    oscillator1.start(now);
+    oscillator2.start(now);
+    oscillator3.start(now);
+    
+    const duration = Math.max(1.0, soundParams.duration || 3.0);
+    
+    oscillator1.stop(now + duration);
+    oscillator2.stop(now + duration);
+    oscillator3.stop(now + duration);
+    
+    return {
+      source: oscillator1,
+      additionalSources: [oscillator2, oscillator3],
+      filter: filter
+    };
+  }
+  
+  // Default handling for other sound types
+  else {
+    // Use a standard approach based on waveform
+    if (soundParams.waveform === 'noise') {
+      // Create noise buffer
+      const sampleRate = audioContext.sampleRate;
+      const bufferSize = sampleRate * (soundParams.duration || 1.0);
+      const noiseBuffer = audioContext.createBuffer(1, bufferSize, sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      
+      // Fill with noise
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      
+      // Create noise source
+      const noiseSource = audioContext.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      
+      // Connect directly to gain node
+      noiseSource.connect(gainNode);
+      
+      // Start source
+      noiseSource.start(now);
+      noiseSource.stop(now + (soundParams.duration || 1.0));
+      
+      return {
+        source: noiseSource,
+        filter: filter
+      };
+    } else {
+      // For regular oscillator sounds
+      const oscillator = audioContext.createOscillator();
+      
+      // Validate waveform type
+      const validWaveforms = ['sine', 'square', 'sawtooth', 'triangle'];
+      if (validWaveforms.includes(soundParams.waveform)) {
+        oscillator.type = soundParams.waveform as OscillatorType;
+      } else {
+        oscillator.type = 'sine';
+      }
+      
+      // Set frequency based on pitch (A4 = 440Hz)
+      oscillator.frequency.value = 440 * Math.pow(2, (soundParams.pitch || 0) / 12);
+      
+      // Connect directly to gain node
+      oscillator.connect(gainNode);
+      
+      // Start oscillator
+      oscillator.start(now);
+      oscillator.stop(now + (soundParams.duration || 1.0));
+      
+      return {
+        source: oscillator,
+        filter: filter
+      };
+    }
+  }
+}
+
+// Helper function to create a noise buffer
+function createNoiseBuffer(audioContext: AudioContext, duration: number) {
+  const sampleRate = audioContext.sampleRate;
+  const bufferSize = sampleRate * duration;
+  const buffer = audioContext.createBuffer(1, bufferSize, sampleRate);
+  const data = buffer.getChannelData(0);
+  
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+  
+  return buffer;
+}
+
+// Helper function to apply default sound parameters
+function applyDefaultSoundParameters(soundParams: any, soundType: string) {
+  console.log(`🔶 TIMELINE: Looking for sound type profile: "${soundType}"`);
+  
+  // Apply default profile for this sound type if available
+  if (soundType && DEFAULT_SOUND_PROFILES[soundType]) {
+    const defaultProfile = DEFAULT_SOUND_PROFILES[soundType];
+    console.log(`🔶 TIMELINE: Applying default profile for ${soundType}`);
+    
+    // Fill in any missing parameters from the default profile
+    Object.entries(defaultProfile).forEach(([key, value]) => {
+      if (soundParams[key] === undefined) {
+        soundParams[key] = value;
+        console.log(`🔶 TIMELINE: Setting missing parameter ${key} = ${value}`);
+      }
+    });
+  } else {
+    console.log(`🔶 TIMELINE: No default profile found for "${soundType}"`);
+    
+    // Apply some reasonable defaults for bass-type sounds
+    if (soundType?.toLowerCase().includes('bass')) {
+      if (soundParams.pitch === undefined) soundParams.pitch = -12;
+      if (soundParams.waveform === undefined) soundParams.waveform = 'sine';
+      if (soundParams.filterType === undefined) soundParams.filterType = 'lowpass';
+      if (soundParams.filterCutoff === undefined) soundParams.filterCutoff = 500;
+    }
+    
+    // Apply some reasonable defaults for kick-type sounds
+    if (soundType?.toLowerCase().includes('kick')) {
+      if (soundParams.pitch === undefined) soundParams.pitch = 0;
+      if (soundParams.waveform === undefined) soundParams.waveform = 'sine';
+      if (soundParams.attack === undefined) soundParams.attack = 0.01;
+      if (soundParams.decay === undefined) soundParams.decay = 0.2;
+      if (soundParams.filterType === undefined) soundParams.filterType = 'lowpass';
+      if (soundParams.filterCutoff === undefined) soundParams.filterCutoff = 200;
+    }
+  }
+}
+
 // Main hook for timeline functionality
 export function useTimeline() {
   const { 
@@ -264,15 +656,27 @@ export function useTimeline() {
   // Update playback state when isPlaying changes - single effect
   useEffect(() => {
     console.log(`🔶 TIMELINE: isPlaying changed to ${timeline.isPlaying}`);
-    if (timeline.isPlaying) {
-      startPlayback();
-    } else {
-      pausePlayback();
-    }
+    
+    // Use an async function inside the effect
+    const updatePlayback = async () => {
+      if (timeline.isPlaying) {
+        try {
+          await startPlayback();
+        } catch (error) {
+          console.error("🔶 TIMELINE: Error starting playback:", error);
+          // If startPlayback fails, make sure to set isPlaying to false
+          setIsPlaying(false);
+        }
+      } else {
+        pausePlayback();
+      }
+    };
+    
+    updatePlayback();
   }, [timeline.isPlaying]);
   
   // Start playback using a completely different approach with requestAnimationFrame
-  const startPlayback = () => {
+  const startPlayback = async () => {
     console.log("🔶 TIMELINE: startPlayback called - using RAF approach");
     
     // First ensure we're not already playing
@@ -311,13 +715,27 @@ export function useTimeline() {
       });
     }
     
-    // Check if any clips should trigger at the current position
-    if (audioContextManager?.context) {
-      checkClipTriggers(startTime);
+    // Ensure audio context is properly running
+    if (audioContextManager) {
+      try {
+        // Force a manual resume of the audio context
+        if (audioContextManager.context.state !== 'running') {
+          console.log("🔶 TIMELINE: Audio context is suspended, manually resuming it");
+          await audioContextManager.context.resume();
+          console.log(`🔶 TIMELINE: Audio context state after resume: ${audioContextManager.context.state}`);
+        } else {
+          console.log(`🔶 TIMELINE: Audio context is already in state: ${audioContextManager.context.state}`);
+        }
+        
+        // Check for clips at the current position
+        await checkClipTriggers(startTime);
+      } catch (error) {
+        console.error("🔶 TIMELINE: Error checking initial clip triggers:", error);
+      }
     }
     
     // Create a frame animation loop for smooth playback
-    const animationLoop = (currentTime: number) => {
+    const animationLoop = async (currentTime: number) => {
       // Calculate elapsed time since playback started
       const elapsedSeconds = (currentTime - globalStartTime) / 1000;
       
@@ -349,11 +767,17 @@ export function useTimeline() {
       else {
         setCurrentTime(newPos);
         
-        // Check for sound triggers
-        checkClipTriggers(newPos);
+        try {
+          // Check for sound triggers (now async)
+          await checkClipTriggers(newPos);
+        } catch (error) {
+          console.error("🔶 TIMELINE: Error checking clip triggers:", error);
+        }
         
-        // Continue the animation loop
-        animationFrameRef.current = requestAnimationFrame(animationLoop);
+        // Continue the animation loop only if we're still playing
+        if (timeline.isPlaying && animationFrameRef.current !== null) {
+          animationFrameRef.current = requestAnimationFrame(animationLoop);
+        }
       }
     };
     
@@ -403,7 +827,7 @@ export function useTimeline() {
   };
   
   // Check if any clips should trigger at the current time
-  const checkClipTriggers = (currentTime: number) => {
+  const checkClipTriggers = async (currentTime: number) => {
     console.log(`🔶 TIMELINE: Checking clip triggers at ${currentTime.toFixed(2)}`);
     
     const audioContext = getAudioContext()?.context;
@@ -479,13 +903,30 @@ export function useTimeline() {
           console.log(`🔶 TIMELINE: Starting clip ${clipId} at ${currentTime.toFixed(2)}, clipStart: ${clipStartTime.toFixed(2)}`);
           
           try {
-            // Make a deep copy of the sound parameters to avoid issues
-            const soundParams = { ...sound };
+            // Make a complete deep copy of all sound parameters to avoid issues
+            const soundParams = JSON.parse(JSON.stringify(sound));
+            
+            // Log the sound parameters for debugging
+            console.log(`🔶 TIMELINE: Sound parameters for clip ${clipId}:`, {
+              type: sound.type,
+              name: sound.name,
+              waveform: sound.waveform,
+              pitch: sound.pitch,
+              attack: sound.attack,
+              decay: sound.decay,
+              sustain: sound.sustain,
+              release: sound.release,
+              filterType: sound.filterType,
+              filterCutoff: sound.filterCutoff
+            });
             
             // Ensure essential parameters have defaults
             if (soundParams.duration === undefined || soundParams.duration <= 0) {
               soundParams.duration = 1.0; // Default to 1 second if not specified
             }
+            
+            // Apply special parameters based on sound type
+            applyDefaultSoundParameters(soundParams, sound.type || sound.name);
             
             const clipDuration = Math.max(0.5, clip.duration); // Ensure minimum duration
             
@@ -501,8 +942,24 @@ export function useTimeline() {
             
             // Play with current offset from clip start time
             const offset = Math.max(0, currentTime - clipStartTime);
-            soundClip.play(audioContext, audioContext.destination, offset);
+            
+            // Force resume the audio context before playing
+            if (audioContext.state !== 'running') {
+              console.log(`🔶 TIMELINE: Audio context is suspended during clip trigger, resuming`);
+              // Don't use await here since we're not in an async function
+              audioContext.resume().then(() => {
+                console.log(`🔶 TIMELINE: Audio context resumed successfully: ${audioContext.state}`);
+              });
+            }
+            
+            // Play the clip with the current audio context destination as output
+            const playResult = soundClip.play(audioContext, audioContext.destination, offset);
             activeClipsRef.current.set(clipId, soundClip);
+            
+            // Log that we've successfully started the clip
+            console.log(`🔶 TIMELINE: Successfully triggered clip ${clipId} at ${currentTime.toFixed(2)}`);
+            console.log(`🔶 TIMELINE: AudioContext state: ${audioContext.state}, play result: ${playResult}`);
+            console.log(`🔶 TIMELINE: Audio routing: SoundClip source -> GainNode -> PanNode -> AudioContext.destination`);
             
             console.log(`🔶 TIMELINE: Playing clip ${clipId} with offset ${offset.toFixed(3)}s`);
           } catch (error) {
