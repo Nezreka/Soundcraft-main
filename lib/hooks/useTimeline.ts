@@ -17,6 +17,16 @@ class SoundClip {
   private sourceNode: AudioBufferSourceNode | OscillatorNode | null = null;
   private gainNode: GainNode | null = null;
   private panNode: StereoPannerNode | null = null;
+  private filterNode: BiquadFilterNode | null = null;
+  private distortionNode: WaveShaperNode | null = null;
+  private reverbNode: ConvolverNode | null = null;
+  private reverbGainNode: GainNode | null = null;
+  private dryGainNode: GainNode | null = null;
+  private delayNode: DelayNode | null = null;
+  private delayFeedbackNode: GainNode | null = null;
+  private delayDryNode: GainNode | null = null;
+  private delayWetNode: GainNode | null = null;
+  private additionalSources: (AudioBufferSourceNode | OscillatorNode)[] = [];
   
   constructor(
     id: string, 
@@ -32,6 +42,42 @@ class SoundClip {
     this.trackPan = trackPan;
     this.startTime = startTime;
     this.duration = duration;
+  }
+  
+  // Create a simple impulse response for reverb
+  private createImpulseResponse(audioContext: AudioContext, duration: number) {
+    const sampleRate = audioContext.sampleRate;
+    const length = sampleRate * duration;
+    const impulse = audioContext.createBuffer(2, length, sampleRate);
+    const leftChannel = impulse.getChannelData(0);
+    const rightChannel = impulse.getChannelData(1);
+
+    for (let i = 0; i < length; i++) {
+      // Exponential decay
+      const decay = Math.exp(-i / ((sampleRate * duration) / 10));
+      // Random noise
+      const noise = Math.random() * 2 - 1;
+
+      leftChannel[i] = noise * decay;
+      rightChannel[i] = noise * decay;
+    }
+
+    return impulse;
+  }
+
+  // Create distortion curve
+  private createDistortionCurve(amount: number) {
+    const k = amount * 100;
+    const samples = 44100;
+    const curve = new Float32Array(samples);
+    const deg = Math.PI / 180;
+
+    for (let i = 0; i < samples; ++i) {
+      const x = (i * 2) / samples - 1;
+      curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+    }
+
+    return curve;
   }
   
   // Play the sound using the specialized sound generators
@@ -52,7 +98,9 @@ class SoundClip {
       sustain: this.soundParams.sustain,
       release: this.soundParams.release,
       filterType: this.soundParams.filterType,
-      filterCutoff: this.soundParams.filterCutoff
+      filterCutoff: this.soundParams.filterCutoff,
+      reverbMix: this.soundParams.reverbMix,
+      distortion: this.soundParams.distortion
     }, null, 2)}`);
     
     // Stop if already playing
@@ -62,19 +110,87 @@ class SoundClip {
     }
     
     try {
-      // Create audio nodes
+      // Create main audio nodes
       this.gainNode = audioContext.createGain();
       this.panNode = audioContext.createStereoPanner();
+      this.filterNode = audioContext.createBiquadFilter();
+      this.distortionNode = audioContext.createWaveShaper();
+      
+      // Create reverb nodes
+      this.reverbNode = audioContext.createConvolver();
+      this.reverbGainNode = audioContext.createGain();
+      this.dryGainNode = audioContext.createGain();
+      
+      // Create delay nodes
+      this.delayNode = audioContext.createDelay(5.0);
+      this.delayFeedbackNode = audioContext.createGain();
+      this.delayDryNode = audioContext.createGain();
+      this.delayWetNode = audioContext.createGain();
+      
+      // Get actual time
+      const now = audioContext.currentTime;
+      
+      // Setup filter
+      if (this.filterNode) {
+        this.filterNode.type = this.soundParams.filterType as BiquadFilterType || 'lowpass';
+        this.filterNode.frequency.value = this.soundParams.filterCutoff || 1000;
+        this.filterNode.Q.value = this.soundParams.filterResonance || 1;
+        
+        // Apply filter envelope if present
+        if (this.soundParams.filterEnvelope && this.soundParams.filterEnvelope.amount) {
+          const baseFreq = this.soundParams.filterCutoff || 1000;
+          const targetFreq = baseFreq + this.soundParams.filterEnvelope.amount;
+          
+          this.filterNode.frequency.setValueAtTime(baseFreq, now);
+          this.filterNode.frequency.linearRampToValueAtTime(
+            targetFreq,
+            now + (this.soundParams.filterEnvelope.attack || 0.01)
+          );
+          
+          if (this.soundParams.filterEnvelope.decay && this.soundParams.filterEnvelope.decay > 0) {
+            this.filterNode.frequency.linearRampToValueAtTime(
+              baseFreq,
+              now + (this.soundParams.filterEnvelope.attack || 0.01) + (this.soundParams.filterEnvelope.decay || 0.1)
+            );
+          }
+        }
+      }
+      
+      // Setup distortion
+      if (this.distortionNode && this.soundParams.distortion && this.soundParams.distortion > 0) {
+        this.distortionNode.curve = this.createDistortionCurve(this.soundParams.distortion);
+        this.distortionNode.oversample = '4x';
+      }
+      
+      // Setup reverb
+      if (this.reverbNode && this.reverbGainNode && this.dryGainNode) {
+        if (this.soundParams.reverbMix && this.soundParams.reverbMix > 0) {
+          this.reverbNode.buffer = this.createImpulseResponse(audioContext, this.soundParams.reverbDecay || 1.0);
+          this.reverbGainNode.gain.value = this.soundParams.reverbMix;
+          this.dryGainNode.gain.value = 1 - this.soundParams.reverbMix;
+        } else {
+          // Bypass reverb
+          this.reverbGainNode.gain.value = 0;
+          this.dryGainNode.gain.value = 1;
+        }
+      }
+      
+      // Setup delay
+      if (this.delayNode && this.delayFeedbackNode && this.delayDryNode && this.delayWetNode) {
+        if (this.soundParams.delayMix && this.soundParams.delayMix > 0) {
+          this.delayNode.delayTime.value = this.soundParams.delayTime || 0.5;
+          this.delayFeedbackNode.gain.value = this.soundParams.delayFeedback || 0.3;
+          this.delayWetNode.gain.value = this.soundParams.delayMix;
+          this.delayDryNode.gain.value = 1 - this.soundParams.delayMix;
+        } else {
+          // Bypass delay
+          this.delayWetNode.gain.value = 0;
+          this.delayDryNode.gain.value = 1;
+        }
+      }
       
       // Set pan based on track parameters
       this.panNode.pan.value = this.trackPan;
-      
-      // Connect gain node to pan node to output - establish full audio path
-      this.gainNode.connect(this.panNode);
-      this.panNode.connect(outputNode);
-      
-      // Debug audio path
-      console.log(`🔊 SOUND: Audio path established: Source -> GainNode -> PanNode -> OutputNode`);
       
       // Use our specialized sound creation based on sound type
       const specializedSound = createSpecializedSound(
@@ -88,34 +204,98 @@ class SoundClip {
       this.sourceNode = specializedSound.source;
       
       // Store any additional sources
-      const additionalSources = specializedSound.additionalSources || [];
+      this.additionalSources = specializedSound.additionalSources || [];
       
-      // Double-check the gain is properly set
+      // Setup gain to respect both sound volume and track volume
       if (this.gainNode) {
-        console.log(`🔊 SOUND: Making sure gain is set, current: ${this.gainNode.gain.value}`);
-        this.gainNode.gain.value = this.soundParams.volume * this.trackVolume;
-        console.log(`🔊 SOUND: Updated gain value: ${this.gainNode.gain.value}`);
+        console.log(`🔊 SOUND: Setting gain with volume=${this.soundParams.volume}, trackVolume=${this.trackVolume}`);
+        
+        // Apply ADSR envelope
+        const soundDuration = this.soundParams.duration || 1.0;
+        const adjustedDuration = soundDuration * (this.soundParams.timeStretch || 1);
+        
+        // Only apply full ADSR if it's not a specialized percussion sound
+        if (!["Bass Kick", "Snare", "Hi-Hat"].includes(this.soundParams.type || '')) {
+          // Apply attack
+          this.gainNode.gain.setValueAtTime(0, now);
+          this.gainNode.gain.linearRampToValueAtTime(
+            this.soundParams.volume * this.trackVolume, 
+            now + (this.soundParams.attack || 0.01)
+          );
+          
+          // Decay to sustain
+          this.gainNode.gain.linearRampToValueAtTime(
+            this.soundParams.volume * this.trackVolume * (this.soundParams.sustain || 0.7),
+            now + (this.soundParams.attack || 0.01) + (this.soundParams.decay || 0.1)
+          );
+          
+          // Release
+          this.gainNode.gain.setValueAtTime(
+            this.soundParams.volume * this.trackVolume * (this.soundParams.sustain || 0.7),
+            now + adjustedDuration - (this.soundParams.release || 0.1)
+          );
+          this.gainNode.gain.linearRampToValueAtTime(0.001, now + adjustedDuration);
+        } else {
+          // For specialized percussion, just set a static gain value
+          this.gainNode.gain.value = this.soundParams.volume * this.trackVolume;
+        }
+      }
+      
+      // Connect all nodes in proper audio chain
+      if (this.gainNode && this.filterNode && this.distortionNode && 
+          this.reverbNode && this.reverbGainNode && this.dryGainNode && 
+          this.delayNode && this.delayDryNode && this.delayWetNode && this.panNode) {
+        
+        // Basic signal path
+        // Source -> Gain -> Filter -> Distortion
+        this.gainNode.connect(this.filterNode);
+        this.filterNode.connect(this.distortionNode);
+        
+        // Split for reverb processing
+        if (this.soundParams.reverbMix && this.soundParams.reverbMix > 0) {
+          // Dry path
+          this.distortionNode.connect(this.dryGainNode);
+          
+          // Wet (reverb) path
+          this.distortionNode.connect(this.reverbNode);
+          this.reverbNode.connect(this.reverbGainNode);
+          
+          // Combine dry and wet paths to pan node
+          this.dryGainNode.connect(this.panNode);
+          this.reverbGainNode.connect(this.panNode);
+        } else {
+          // No reverb, direct connection
+          this.distortionNode.connect(this.panNode);
+        }
+        
+        // Connect pan to final output
+        this.panNode.connect(outputNode);
+        
+        console.log(`🔊 SOUND: Full audio chain connected: Source -> Gain -> Filter -> Distortion -> [Reverb] -> Pan -> Output`);
+      } else {
+        // Fallback for simpler routing
+        if (this.gainNode && this.panNode) {
+          this.gainNode.connect(this.panNode);
+          this.panNode.connect(outputNode);
+          console.log(`🔊 SOUND: Simple audio chain: Gain -> Pan -> Output`);
+        }
       }
       
       // Set playing state
       this.isPlaying = true;
       
       // Auto-stop when done - use a longer timeout for good measure
-      const stopTimeout = Math.max(1.0, this.duration) * 1000 + 100;
+      const effectsTail = Math.max(
+        (this.soundParams.reverbMix || 0) > 0 ? (this.soundParams.reverbDecay || 0) * 2 : 0,
+        (this.soundParams.delayMix || 0) > 0 ? (this.soundParams.delayTime || 0) * 10 * (this.soundParams.delayFeedback || 0) : 0
+      );
+      
+      const totalDuration = Math.max(1.0, this.duration + effectsTail) * 1000 + 200;
+      
       setTimeout(() => {
-        console.log(`🔊 SOUND: Auto-stopping clip ${this.id} after ${stopTimeout/1000} seconds`);
+        console.log(`🔊 SOUND: Auto-stopping clip ${this.id} after ${totalDuration/1000} seconds`);
         this.stop();
-        
-        // Also stop any additional sources
-        additionalSources.forEach(source => {
-          try {
-            source.stop();
-            source.disconnect();
-          } catch (e) {
-            // Ignore errors if already stopped
-          }
-        });
-      }, stopTimeout);
+      }, totalDuration);
       
       return true;
     } catch (error) {
@@ -145,40 +325,55 @@ class SoundClip {
       this.sourceNode = null;
     }
     
-    if (this.gainNode) {
+    // Stop additional sources
+    this.additionalSources.forEach(source => {
       try {
-        this.gainNode.disconnect();
+        source.stop();
+        source.disconnect();
       } catch (e) {
-        console.error(`🔊 SOUND: Error disconnecting gain node for ${this.id}:`, e);
+        // Ignore errors if already stopped
       }
-      this.gainNode = null;
-    }
+    });
+    this.additionalSources = [];
     
-    if (this.panNode) {
-      try {
-        this.panNode.disconnect();
-      } catch (e) {
-        console.error(`🔊 SOUND: Error disconnecting pan node for ${this.id}:`, e);
+    // Disconnect all audio nodes
+    [
+      this.gainNode,
+      this.panNode,
+      this.filterNode,
+      this.distortionNode,
+      this.reverbNode,
+      this.reverbGainNode,
+      this.dryGainNode,
+      this.delayNode,
+      this.delayFeedbackNode,
+      this.delayDryNode,
+      this.delayWetNode
+    ].forEach(node => {
+      if (node) {
+        try {
+          node.disconnect();
+        } catch (e) {
+          console.error(`🔊 SOUND: Error disconnecting node for ${this.id}:`, e);
+        }
       }
-      this.panNode = null;
-    }
+    });
+    
+    // Clear references
+    this.gainNode = null;
+    this.panNode = null;
+    this.filterNode = null;
+    this.distortionNode = null;
+    this.reverbNode = null;
+    this.reverbGainNode = null;
+    this.dryGainNode = null;
+    this.delayNode = null;
+    this.delayFeedbackNode = null;
+    this.delayDryNode = null;
+    this.delayWetNode = null;
     
     this.isPlaying = false;
     console.log(`🔊 SOUND: Clip ${this.id} is now stopped`);
-  }
-  
-  // Helper to create noise buffer
-  private createNoiseBuffer(audioContext: AudioContext, duration: number) {
-    const sampleRate = audioContext.sampleRate;
-    const bufferSize = sampleRate * duration;
-    const buffer = audioContext.createBuffer(1, bufferSize, sampleRate);
-    const data = buffer.getChannelData(0);
-    
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    
-    return buffer;
   }
 }
 

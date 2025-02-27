@@ -1,6 +1,7 @@
 import { getAudioContext } from './audioContext';
 import { SoundParameters, TimelineState } from '@/types/audio';
 import { ExportOptions } from './exporters';
+import { createSpecializedSource, createNoiseBuffer, createImpulseResponse, createDistortionCurve } from './soundGenerators';
 
 // Define our timeline export options
 export interface TimelineExportOptions {
@@ -126,6 +127,16 @@ export async function exportTimeline(options: TimelineExportOptions): Promise<Bl
     // Start all audio sources
     console.log(`Starting render of ${clipsToRender.length} clips...`);
     
+    // Debug log to help diagnose volume issues
+    console.log("Volumes being used for tracks:", 
+      timeline.tracks.map(t => ({ 
+        trackId: t.id, 
+        volume: t.volume,
+        soundId: t.soundId,
+        soundVolume: sounds.find(s => s.id === t.soundId)?.volume || 'unknown'
+      }))
+    );
+    
     // Render the audio
     const renderedBuffer = await offlineCtx.startRendering();
     
@@ -138,15 +149,16 @@ export async function exportTimeline(options: TimelineExportOptions): Promise<Bl
       length: renderedBuffer.length,
     });
     
-    // Apply normalization if requested
+    // Apply normalization if requested, with a gentler approach
     if (normalize) {
-      normalizeAudioBuffer(renderedBuffer);
+      // Use a more gentle normalization (75% instead of 90%) for a more natural sound
+      normalizeAudioBuffer(renderedBuffer, 0.75);
     }
     
     // Encode to requested format
     const outputBlob = await encodeAudioFormat(renderedBuffer, format, quality);
     
-    // Cleanup any resources
+    // Cleanup clip resources only (not track nodes since they're handled by the offline context)
     clipsToRender.forEach(clip => clip.cleanup());
     
     // Generate a filename
@@ -173,160 +185,206 @@ async function renderClip(
   outputNode: AudioNode, 
   soundParams: SoundParameters, 
   startTime: number,
-  duration: number
+  duration: number,
+  trackVolume: number = 1.0  // Default to 1.0 if not provided
 ): Promise<{ source: AudioNode, cleanup: () => void } | null> {
   const now = startTime;
   
-  // Create source based on sound type
-  if (soundParams.waveform === 'noise') {
-    // Create noise buffer
-    const noiseBuffer = createNoiseBuffer(offlineCtx, duration);
-    const noiseSource = offlineCtx.createBufferSource();
-    noiseSource.buffer = noiseBuffer;
+  try {
+    // Create a proper copy of sound parameters, preserving all properties
+    const soundCopy = { ...soundParams };
     
-    // Handle filters and effects
+    // Make sure we preserve nested objects correctly
+    if (soundParams.filterEnvelope) soundCopy.filterEnvelope = { ...soundParams.filterEnvelope };
+    if (soundParams.pitchEnvelope) soundCopy.pitchEnvelope = { ...soundParams.pitchEnvelope };
+    
+    // Create all audio nodes
     const gainNode = offlineCtx.createGain();
-    const filter = offlineCtx.createBiquadFilter();
+    const filterNode = offlineCtx.createBiquadFilter();
+    const distortionNode = offlineCtx.createWaveShaper();
     
-    // Set filter parameters
-    filter.type = (soundParams.filterType as BiquadFilterType) || 'lowpass';
-    filter.frequency.value = soundParams.filterCutoff || 1000;
-    filter.Q.value = soundParams.filterResonance || 1;
+    // Create reverb nodes
+    const reverbNode = offlineCtx.createConvolver();
+    const reverbGainNode = offlineCtx.createGain();
+    const dryGainNode = offlineCtx.createGain();
     
-    // Set envelope
-    gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(soundParams.volume || 0.8, now + (soundParams.attack || 0.01));
-    gainNode.gain.linearRampToValueAtTime(
-      (soundParams.volume || 0.8) * (soundParams.sustain || 0.5),
-      now + (soundParams.attack || 0.01) + (soundParams.decay || 0.1)
-    );
-    gainNode.gain.linearRampToValueAtTime(0.001, now + duration);
+    // Create delay nodes
+    const delayNode = offlineCtx.createDelay(5.0);
+    const delayFeedbackNode = offlineCtx.createGain();
+    const delayDryNode = offlineCtx.createGain();
+    const delayWetNode = offlineCtx.createGain();
     
-    // Connect nodes
-    noiseSource.connect(filter);
-    filter.connect(gainNode);
-    gainNode.connect(outputNode);
+    // Setup filter
+    filterNode.type = soundCopy.filterType as BiquadFilterType || 'lowpass';
+    filterNode.frequency.value = soundCopy.filterCutoff || 1000;
+    filterNode.Q.value = soundCopy.filterResonance || 1;
     
-    // Start the source
-    noiseSource.start(now);
-    noiseSource.stop(now + duration);
-    
-    return {
-      source: noiseSource,
-      cleanup: () => {
-        try {
-          noiseSource.disconnect();
-          filter.disconnect();
-          gainNode.disconnect();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-    };
-  } else {
-    // Create oscillator for other sound types
-    const oscillator = offlineCtx.createOscillator();
-    
-    // Set waveform type
-    if (['sine', 'square', 'sawtooth', 'triangle'].includes(soundParams.waveform)) {
-      oscillator.type = soundParams.waveform as OscillatorType;
-    } else {
-      oscillator.type = 'sine'; // Default
-    }
-    
-    // Apply specialized parameters based on sound type
-    if (soundParams.type === 'Bass Kick' || soundParams.name === 'Bass Kick') {
-      // Special kick drum with pitch sweep
-      const baseFreq = 40 * Math.pow(2, (soundParams.pitch || 0) / 12);
-      const clickFreq = 160 * Math.pow(2, (soundParams.pitch || 0) / 12);
+    // Apply filter envelope if present
+    if (soundCopy.filterEnvelope && soundCopy.filterEnvelope.amount) {
+      const baseFreq = soundCopy.filterCutoff || 1000;
+      const targetFreq = baseFreq + soundCopy.filterEnvelope.amount;
       
-      oscillator.frequency.setValueAtTime(clickFreq, now);
-      oscillator.frequency.exponentialRampToValueAtTime(baseFreq, now + 0.03);
-    } else {
-      // Standard oscillator frequency setting
-      const baseFreq = 440 * Math.pow(2, (soundParams.pitch || 0) / 12);
-      oscillator.frequency.value = baseFreq;
+      filterNode.frequency.setValueAtTime(baseFreq, now);
+      filterNode.frequency.linearRampToValueAtTime(
+        targetFreq,
+        now + (soundCopy.filterEnvelope.attack || 0.01)
+      );
+      
+      if (soundCopy.filterEnvelope.decay && soundCopy.filterEnvelope.decay > 0) {
+        filterNode.frequency.linearRampToValueAtTime(
+          baseFreq,
+          now + (soundCopy.filterEnvelope.attack || 0.01) + (soundCopy.filterEnvelope.decay || 0.1)
+        );
+      }
     }
     
-    // Create envelope and filter
-    const gainNode = offlineCtx.createGain();
-    const filter = offlineCtx.createBiquadFilter();
+    // Setup distortion
+    if (soundCopy.distortion && soundCopy.distortion > 0) {
+      distortionNode.curve = createDistortionCurve(soundCopy.distortion);
+      distortionNode.oversample = '4x';
+    }
     
-    // Set filter parameters
-    filter.type = (soundParams.filterType as BiquadFilterType) || 'lowpass';
-    filter.frequency.value = soundParams.filterCutoff || 1000;
-    filter.Q.value = soundParams.filterResonance || 1;
-    
-    // Set envelope based on sound type
-    if (soundParams.type === 'Bass Kick' || soundParams.name === 'Bass Kick') {
-      gainNode.gain.setValueAtTime(soundParams.volume || 0.8, now);
-      gainNode.gain.linearRampToValueAtTime(
-        (soundParams.volume || 0.8) * 0.1,
-        now + 0.3
-      );
-      gainNode.gain.linearRampToValueAtTime(0.001, now + duration);
+    // Setup reverb
+    if (soundCopy.reverbMix && soundCopy.reverbMix > 0) {
+      reverbNode.buffer = createImpulseResponse(offlineCtx, soundCopy.reverbDecay || 1.0);
+      reverbGainNode.gain.value = soundCopy.reverbMix;
+      dryGainNode.gain.value = 1 - soundCopy.reverbMix;
     } else {
-      // Standard ADSR envelope
+      // Bypass reverb
+      reverbGainNode.gain.value = 0;
+      dryGainNode.gain.value = 1;
+    }
+    
+    // Setup delay
+    if (soundCopy.delayMix && soundCopy.delayMix > 0) {
+      delayNode.delayTime.value = soundCopy.delayTime || 0.5;
+      delayFeedbackNode.gain.value = soundCopy.delayFeedback || 0.3;
+      delayWetNode.gain.value = soundCopy.delayMix;
+      delayDryNode.gain.value = 1 - soundCopy.delayMix;
+    } else {
+      // Bypass delay
+      delayWetNode.gain.value = 0;
+      delayDryNode.gain.value = 1;
+    }
+    
+    // Use the shared specialized sound creation
+    const sourceInfo = createSpecializedSource(offlineCtx, soundCopy, now);
+    const source = sourceInfo.source;
+    const output = sourceInfo.output || source;
+    const additionalSources = sourceInfo.additionalSources || [];
+    
+    // Apply ADSR envelope (except for specialized percussions that have their own envelopes)
+    if (!["Bass Kick", "Snare", "Hi-Hat"].includes(soundCopy.type || '')) {
+      // Apply full ADSR envelope
+      const adjustedDuration = Math.min(duration, soundCopy.duration || duration);
+      
+      // Multiply sound volume by track volume (just like in timeline playback)
+      const effectiveVolume = (soundCopy.volume || 0.8) * trackVolume;
+      
       gainNode.gain.setValueAtTime(0, now);
       gainNode.gain.linearRampToValueAtTime(
-        soundParams.volume || 0.8,
-        now + (soundParams.attack || 0.01)
+        effectiveVolume, 
+        now + (soundCopy.attack || 0.01)
       );
+      
       gainNode.gain.linearRampToValueAtTime(
-        (soundParams.volume || 0.8) * (soundParams.sustain || 0.5),
-        now + (soundParams.attack || 0.01) + (soundParams.decay || 0.1)
+        effectiveVolume * (soundCopy.sustain || 0.7),
+        now + (soundCopy.attack || 0.01) + (soundCopy.decay || 0.1)
       );
-      gainNode.gain.linearRampToValueAtTime(0.001, now + duration);
+      
+      gainNode.gain.setValueAtTime(
+        effectiveVolume * (soundCopy.sustain || 0.7),
+        now + adjustedDuration - (soundCopy.release || 0.1)
+      );
+      
+      gainNode.gain.linearRampToValueAtTime(0.001, now + adjustedDuration);
+    } else {
+      // For specialized percussion sounds, just set a fixed gain
+      // Multiply sound volume by track volume (just like in timeline playback)
+      gainNode.gain.value = (soundCopy.volume || 0.8) * trackVolume;
+    }
+
+    // Connect the audio chain
+    // Source -> Gain -> Filter -> Distortion -> [Dry/Wet Split] -> [Delay Split]
+    output.connect(gainNode);
+    gainNode.connect(filterNode);
+    filterNode.connect(distortionNode);
+    
+    // For reverb, split into dry and wet paths
+    if (soundCopy.reverbMix && soundCopy.reverbMix > 0) {
+      // Dry path
+      distortionNode.connect(dryGainNode);
+      
+      // Wet (reverb) path
+      distortionNode.connect(reverbNode);
+      reverbNode.connect(reverbGainNode);
+      
+      // Combine paths to output
+      dryGainNode.connect(outputNode);
+      reverbGainNode.connect(outputNode);
+    } else {
+      // No reverb, direct connection
+      distortionNode.connect(outputNode);
     }
     
-    // Connect nodes
-    oscillator.connect(filter);
-    filter.connect(gainNode);
-    gainNode.connect(outputNode);
+    // Start the sources
+    source.start(now);
+    source.stop(now + duration + 0.5); // Add tail for effects
     
-    // Start the oscillator
-    oscillator.start(now);
-    oscillator.stop(now + duration);
+    // Start any additional sources
+    additionalSources.forEach(src => {
+      src.start(now);
+      src.stop(now + duration + 0.5);
+    });
     
-    // Return source and cleanup function
-    return {
-      source: oscillator,
-      cleanup: () => {
-        try {
-          oscillator.disconnect();
-          filter.disconnect();
-          gainNode.disconnect();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
+    // Create cleanup function
+    const cleanup = () => {
+      try {
+        // Disconnect all nodes
+        if (source) source.disconnect();
+        gainNode.disconnect();
+        filterNode.disconnect();
+        distortionNode.disconnect();
+        reverbNode.disconnect();
+        reverbGainNode.disconnect();
+        dryGainNode.disconnect();
+        delayNode.disconnect();
+        delayFeedbackNode.disconnect();
+        delayDryNode.disconnect();
+        delayWetNode.disconnect();
+        
+        // Disconnect additional sources
+        additionalSources.forEach(src => {
+          try {
+            src.disconnect();
+          } catch (e) {
+            // Ignore errors
+          }
+        });
+      } catch (e) {
+        // Ignore cleanup errors
       }
     };
+    
+    // Return the source and cleanup function
+    return {
+      source,
+      cleanup
+    };
+  } catch (error) {
+    console.error('Error rendering clip:', error);
+    return null;
   }
 }
 
-/**
- * Creates a buffer of white noise for noise-based sounds
- */
-function createNoiseBuffer(context: BaseAudioContext, duration: number): AudioBuffer {
-  const sampleRate = context.sampleRate;
-  const bufferSize = Math.ceil(sampleRate * duration);
-  const buffer = context.createBuffer(2, bufferSize, sampleRate);
-  
-  // Fill both channels with noise
-  for (let channel = 0; channel < 2; channel++) {
-    const data = buffer.getChannelData(channel);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-  }
-  
-  return buffer;
-}
+// We're now using the imported createNoiseBuffer from soundGenerators.ts
 
 /**
- * Normalizes an audio buffer to use the full dynamic range
+ * Normalizes an audio buffer to use a specified portion of the dynamic range
+ * @param buffer The audio buffer to normalize
+ * @param targetAmplitude The target amplitude (0.0-1.0) to normalize to (default 0.75)
  */
-function normalizeAudioBuffer(buffer: AudioBuffer): void {
+function normalizeAudioBuffer(buffer: AudioBuffer, targetAmplitude: number = 0.75): void {
   // Find the peak amplitude across all channels
   let maxSample = 0;
   
@@ -339,17 +397,23 @@ function normalizeAudioBuffer(buffer: AudioBuffer): void {
   
   // Apply normalization if needed
   if (maxSample > 0 && maxSample !== 1) {
-    // Target 90% of max to avoid clipping
-    const gain = 0.9 / maxSample;
+    // Use the specified target amplitude (default is gentler 75% of max)
+    const gain = targetAmplitude / maxSample;
     
-    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-      const data = buffer.getChannelData(channel);
-      for (let i = 0; i < data.length; i++) {
-        data[i] *= gain;
+    // Only normalize if the gain would be greater than 1 (if sound is too quiet)
+    // or if the sound is significantly clipping above 1.0
+    if (gain > 1.1 || maxSample > 1.05) {
+      for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+        const data = buffer.getChannelData(channel);
+        for (let i = 0; i < data.length; i++) {
+          data[i] *= gain;
+        }
       }
+      
+      console.log(`Normalized audio by ${gain.toFixed(2)}x gain (peak was ${maxSample.toFixed(2)}, target ${targetAmplitude})`);
+    } else {
+      console.log(`Audio level is good (peak: ${maxSample.toFixed(2)}), no normalization needed`);
     }
-    
-    console.log(`Normalized audio by ${gain.toFixed(2)}x gain (peak was ${maxSample.toFixed(2)})`);
   }
 }
 
