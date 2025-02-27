@@ -1,4 +1,8 @@
 // lib/audio/soundGenerators.ts
+//
+// Shared sound generation code between the sound editor and timeline
+// This ensures sounds are consistent between the two contexts
+
 import { SoundParameters } from "@/types/audio";
 
 // Create a noise buffer for noise waveform
@@ -15,51 +19,12 @@ export const createNoiseBuffer = (audioContext: AudioContext, duration: number) 
   return buffer;
 };
 
-// Create distortion curve
-export const createDistortionCurve = (amount: number) => {
-  const k = amount * 100;
-  const samples = 44100;
-  const curve = new Float32Array(samples);
-  const deg = Math.PI / 180;
-
-  for (let i = 0; i < samples; ++i) {
-    const x = (i * 2) / samples - 1;
-    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
-  }
-
-  return curve;
-};
-
-// Create a simple impulse response for reverb
-export const createImpulseResponse = (
-  audioContext: AudioContext,
-  duration: number
-) => {
-  const sampleRate = audioContext.sampleRate;
-  const length = sampleRate * duration;
-  const impulse = audioContext.createBuffer(2, length, sampleRate);
-  const leftChannel = impulse.getChannelData(0);
-  const rightChannel = impulse.getChannelData(1);
-
-  for (let i = 0; i < length; i++) {
-    // Exponential decay
-    const decay = Math.exp(-i / ((sampleRate * duration) / 10));
-    // Random noise
-    const noise = Math.random() * 2 - 1;
-
-    leftChannel[i] = noise * decay;
-    rightChannel[i] = noise * decay;
-  }
-
-  return impulse;
-};
-
-// Create specialized sound sources for different types
-export const createSpecializedSource = (
+// Create specialized sound sources based on sound type
+export function createSpecializedSource(
   ctx: AudioContext,
   sound: SoundParameters,
   now: number
-) => {
+) {
   // For Bass Kick, create a specialized kick drum sound
   if (sound.type === "Bass Kick") {
     // Create the main oscillator (sine wave for the body)
@@ -97,11 +62,27 @@ export const createSpecializedSource = (
     // Connect oscillator to its envelope
     oscillator.connect(kickEnvelope);
 
+    // Calculate full duration including release to properly set completion state
+    const totalDuration = sound.duration + 0.1;
+    
     // Start the oscillator
     oscillator.start(now);
-    oscillator.stop(now + sound.duration + 0.1); // Add a little buffer
-
-    return { source: oscillator, output: kickEnvelope };
+    oscillator.stop(now + totalDuration);
+    
+    // Set up an event for when oscillator ends
+    oscillator.onended = () => {
+      console.log("Bass Kick oscillator ended naturally");
+    };
+    
+    // Return both source and output, plus duration for proper cleanup
+    return { 
+      source: oscillator, 
+      output: kickEnvelope,
+      effectiveDuration: totalDuration,
+      onComplete: () => {
+        console.log("Bass Kick complete callback triggered");
+      }
+    };
   }
 
   // For Snare, create a specialized snare drum sound
@@ -243,7 +224,8 @@ export const createSpecializedSource = (
     return { 
       source: noiseSource, 
       output: mainGain, 
-      additionalSources: [toneOsc] 
+      additionalSources: [toneOsc],
+      effectiveDuration: sound.duration + 0.1
     };
   }
 
@@ -302,6 +284,7 @@ export const createSpecializedSource = (
       source: oscillator,
       output: bassGain,
       additionalSources: oscillator2 ? [oscillator2] : undefined,
+      effectiveDuration: sound.duration + 0.1
     };
   }
 
@@ -332,7 +315,11 @@ export const createSpecializedSource = (
     oscillator.start(now);
     oscillator.stop(now + sound.duration);
 
-    return { source: oscillator, output: leadGain };
+    return { 
+      source: oscillator, 
+      output: leadGain,
+      effectiveDuration: sound.duration + 0.1
+    };
   }
 
   // For Pad, create a pad sound
@@ -396,6 +383,7 @@ export const createSpecializedSource = (
       source: oscillator1,
       output: padGain,
       additionalSources: [oscillator2, oscillator3],
+      effectiveDuration: sound.duration + 0.2 // Add a slightly longer tail for pad sounds
     };
   }
 
@@ -432,4 +420,43 @@ export const createSpecializedSource = (
       return { source: oscillator, output: oscillator };
     }
   }
+}
+
+// Create a simple impulse response for reverb
+export const createImpulseResponse = (
+  audioContext: AudioContext,
+  duration: number
+) => {
+  const sampleRate = audioContext.sampleRate;
+  const length = sampleRate * duration;
+  const impulse = audioContext.createBuffer(2, length, sampleRate);
+  const leftChannel = impulse.getChannelData(0);
+  const rightChannel = impulse.getChannelData(1);
+
+  for (let i = 0; i < length; i++) {
+    // Exponential decay
+    const decay = Math.exp(-i / ((sampleRate * duration) / 10));
+    // Random noise
+    const noise = Math.random() * 2 - 1;
+
+    leftChannel[i] = noise * decay;
+    rightChannel[i] = noise * decay;
+  }
+
+  return impulse;
+};
+
+// Create distortion curve
+export const createDistortionCurve = (amount: number) => {
+  const k = amount * 100;
+  const samples = 44100;
+  const curve = new Float32Array(samples);
+  const deg = Math.PI / 180;
+
+  for (let i = 0; i < samples; ++i) {
+    const x = (i * 2) / samples - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+
+  return curve;
 };
