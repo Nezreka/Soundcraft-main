@@ -274,7 +274,7 @@ async function renderClip(
     const additionalSources = sourceInfo.additionalSources || [];
     
     // Apply ADSR envelope (except for specialized percussions that have their own envelopes)
-    if (!["Bass Kick", "Snare", "Hi-Hat"].includes(soundCopy.type || '')) {
+    if (!["Bass Kick", "Snare", "Hi-Hat", "Percussion"].includes(soundCopy.type || '')) {
       // Apply full ADSR envelope
       const adjustedDuration = Math.min(duration, soundCopy.duration || duration);
       

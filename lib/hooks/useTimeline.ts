@@ -215,7 +215,7 @@ class SoundClip {
         const adjustedDuration = soundDuration * (this.soundParams.timeStretch || 1);
         
         // Only apply full ADSR if it's not a specialized percussion sound
-        if (!["Bass Kick", "Snare", "Hi-Hat"].includes(this.soundParams.type || '')) {
+        if (!["Bass Kick", "Snare", "Hi-Hat", "Percussion"].includes(this.soundParams.type || '')) {
           // Apply attack
           this.gainNode.gain.setValueAtTime(0, now);
           this.gainNode.gain.linearRampToValueAtTime(

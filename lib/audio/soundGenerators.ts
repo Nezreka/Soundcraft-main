@@ -387,18 +387,164 @@ export function createSpecializedSource(
     };
   }
 
-  // For FX or other types, use the default approach
+  // For FX, Vocal, Noise or other types, use a generic approach with proper envelope handling
   else {
-    if (sound.waveform === "noise") {
+    // First create a gain node for envelope shaping for all types
+    const envGain = ctx.createGain();
+    
+    if (sound.waveform === "noise" || sound.type === "Noise") {
       // Create noise source
       const noiseBuffer = createNoiseBuffer(ctx, sound.duration || 1.0);
       const noiseSource = ctx.createBufferSource();
       noiseSource.buffer = noiseBuffer;
-      return { source: noiseSource, output: noiseSource };
-    } else {
+      
+      // Apply envelope
+      envGain.gain.setValueAtTime(0, now);
+      envGain.gain.linearRampToValueAtTime(1, now + Math.max(0.01, sound.attack || 0.05));
+      envGain.gain.linearRampToValueAtTime(
+        sound.sustain || 0.5,
+        now + (sound.attack || 0.05) + (sound.decay || 0.1)
+      );
+      envGain.gain.linearRampToValueAtTime(0.001, now + (sound.duration || 1.0));
+      
+      // Connect noise source to envelope gain
+      noiseSource.connect(envGain);
+      
+      // Start and stop the source
+      noiseSource.start(now);
+      noiseSource.stop(now + (sound.duration || 1.0) + 0.1);
+      
+      return { 
+        source: noiseSource, 
+        output: envGain,
+        effectiveDuration: (sound.duration || 1.0) + 0.1
+      };
+    } 
+    // Handle Vocal type specially 
+    else if (sound.type === "Vocal") {
+      // Vocal sounds use multiple oscillators for a formant-like timbre
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const osc3 = ctx.createOscillator();
+      
+      // Set different waveforms
+      osc1.type = 'sine';
+      osc2.type = 'triangle';
+      osc3.type = 'sine';
+      
+      // Base frequency with slight variations for a vocal-like effect
+      const baseFreq = 330 * Math.pow(2, sound.pitch / 12); // E4 is a common speaking pitch
+      osc1.frequency.value = baseFreq;
+      osc2.frequency.value = baseFreq * 2.0; // Second formant
+      osc3.frequency.value = baseFreq * 2.8; // Third formant
+      
+      // Create individual gain nodes
+      const gain1 = ctx.createGain();
+      const gain2 = ctx.createGain();
+      const gain3 = ctx.createGain();
+      
+      // Set formant gains
+      gain1.gain.value = 0.8;
+      gain2.gain.value = 0.4;
+      gain3.gain.value = 0.2;
+      
+      // Connect oscillators to their gains
+      osc1.connect(gain1);
+      osc2.connect(gain2);
+      osc3.connect(gain3);
+      
+      // Connect all gains to the envelope
+      gain1.connect(envGain);
+      gain2.connect(envGain);
+      gain3.connect(envGain);
+      
+      // Apply envelope
+      envGain.gain.setValueAtTime(0, now);
+      envGain.gain.linearRampToValueAtTime(1, now + (sound.attack || 0.05));
+      envGain.gain.linearRampToValueAtTime(
+        sound.sustain || 0.7,
+        now + (sound.attack || 0.05) + (sound.decay || 0.1)
+      );
+      envGain.gain.linearRampToValueAtTime(0.001, now + (sound.duration || 1.0));
+      
+      // Start oscillators
+      osc1.start(now);
+      osc2.start(now);
+      osc3.start(now);
+      
+      // Stop oscillators
+      osc1.stop(now + (sound.duration || 1.0) + 0.1);
+      osc2.stop(now + (sound.duration || 1.0) + 0.1);
+      osc3.stop(now + (sound.duration || 1.0) + 0.1);
+      
+      return {
+        source: osc1,
+        output: envGain,
+        additionalSources: [osc2, osc3],
+        effectiveDuration: (sound.duration || 1.0) + 0.1
+      };
+    }
+    // Handle FX type specially
+    else if (sound.type === "FX") {
+      // Create an oscillator as the main source
+      const oscillator = ctx.createOscillator();
+      oscillator.type = sound.waveform as OscillatorType || 'sawtooth';
+      
+      // Base frequency
+      const baseFreq = 440 * Math.pow(2, sound.pitch / 12);
+      oscillator.frequency.value = baseFreq;
+      
+      // Create an LFO for pitch modulation
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      
+      lfo.frequency.value = 4; // Moderate speed modulation
+      lfoGain.gain.value = baseFreq * 0.3; // 30% modulation depth
+      
+      // Connect LFO to oscillator frequency
+      lfo.connect(lfoGain);
+      lfoGain.connect(oscillator.frequency);
+      
+      // Apply envelope with slower attack and release for FX
+      envGain.gain.setValueAtTime(0, now);
+      envGain.gain.linearRampToValueAtTime(1, now + (sound.attack || 0.3));
+      envGain.gain.linearRampToValueAtTime(
+        sound.sustain || 0.6,
+        now + (sound.attack || 0.3) + (sound.decay || 0.2)
+      );
+      envGain.gain.linearRampToValueAtTime(0.001, now + (sound.duration || 2.0));
+      
+      // Connect oscillator to envelope
+      oscillator.connect(envGain);
+      
+      // Start oscillator and LFO
+      oscillator.start(now);
+      lfo.start(now);
+      
+      // Stop oscillator and LFO
+      oscillator.stop(now + (sound.duration || 2.0) + 0.5);
+      lfo.stop(now + (sound.duration || 2.0) + 0.5);
+      
+      return {
+        source: oscillator,
+        output: envGain,
+        additionalSources: [lfo],
+        effectiveDuration: (sound.duration || 2.0) + 0.5
+      };
+    }
+    // Default handling for other oscillator-based sounds
+    else {
       // Create oscillator
       const oscillator = ctx.createOscillator();
-      oscillator.type = sound.waveform as OscillatorType;
+      
+      // Handle different waveform types
+      if (['sine', 'square', 'sawtooth', 'triangle'].includes(sound.waveform)) {
+        oscillator.type = sound.waveform as OscillatorType;
+      } else {
+        oscillator.type = 'sine'; // Default to sine if invalid waveform
+      }
+      
+      // Set frequency based on pitch
       oscillator.frequency.value = 440 * Math.pow(2, sound.pitch / 12); // Apply pitch
 
       // Set up pitch envelope if defined
@@ -416,8 +562,28 @@ export function createSpecializedSource(
           now + (sound.pitchEnvelope.attack || 0.01)
         );
       }
+      
+      // Apply standard ADSR envelope
+      envGain.gain.setValueAtTime(0, now);
+      envGain.gain.linearRampToValueAtTime(1, now + (sound.attack || 0.05));
+      envGain.gain.linearRampToValueAtTime(
+        sound.sustain || 0.7,
+        now + (sound.attack || 0.05) + (sound.decay || 0.1)
+      );
+      envGain.gain.linearRampToValueAtTime(0.001, now + (sound.duration || 1.0));
+      
+      // Connect oscillator to envelope gain
+      oscillator.connect(envGain);
+      
+      // Start and stop the oscillator
+      oscillator.start(now);
+      oscillator.stop(now + (sound.duration || 1.0) + 0.1);
 
-      return { source: oscillator, output: oscillator };
+      return { 
+        source: oscillator, 
+        output: envGain,
+        effectiveDuration: (sound.duration || 1.0) + 0.1
+      };
     }
   }
 }
