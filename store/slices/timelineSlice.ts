@@ -1,5 +1,5 @@
 import { StateCreator } from 'zustand';
-import { TimelineTrack, TimelineClip, TimelineState } from '@/types/audio';
+import { TimelineTrack, TimelineClip, TimelineState, SoundParameters } from '@/types/audio';
 import { TimelinePreset } from '@/types/preset';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -7,27 +7,43 @@ export interface TimelineSlice {
   timeline: TimelineState;
   timelinePresets: TimelinePreset[];
   
+  // Track management
   addTrack: (soundId: string, name: string) => void;
   removeTrack: (trackId: string) => void;
   updateTrack: (trackId: string, updates: Partial<TimelineTrack>) => void;
   
+  // Clip management
   addClip: (trackId: string, startTime: number, duration: number) => void;
   removeClip: (trackId: string, clipId: string) => void;
   updateClip: (trackId: string, clipId: string, updates: Partial<TimelineClip>) => void;
+  moveClip: (trackId: string, clipId: string, newStartTime: number) => void;
   
+  // Playback control
   setCurrentTime: (time: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
+  seekForward: (seconds: number) => void;
+  seekBackward: (seconds: number) => void;
+  
+  // Loop control
   setLoopPoints: (start: number, end: number) => void;
   toggleLoop: () => void;
   
+  // Timeline presets
   saveTimelinePreset: (name: string) => void;
   loadTimelinePreset: (presetId: string) => void;
   deleteTimelinePreset: (presetId: string) => void;
+  
+  // Timeline visibility
+  toggleTimelineVisibility: () => void;
+  
+  // Sound filtering for timeline
+  filterSoundsByType: (type: string | null) => SoundParameters[];
+  filterSoundsByName: (name: string) => SoundParameters[];
 }
 
 const initialTimelineState: TimelineState = {
   tracks: [],
-  duration: 60,
+  duration: 15, // 15 seconds total timeline duration
   currentTime: 0,
   isPlaying: false,
   loop: {
@@ -41,6 +57,7 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
   timeline: initialTimelineState,
   timelinePresets: [],
   
+  // Track management
   addTrack: (soundId, name) => {
     const newTrack: TimelineTrack = {
       id: uuidv4(),
@@ -82,6 +99,7 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     }));
   },
   
+  // Clip management
   addClip: (trackId, startTime, duration) => {
     const newClip: TimelineClip = {
       id: uuidv4(),
@@ -133,6 +151,27 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     }));
   },
   
+  moveClip: (trackId, clipId, newStartTime) => {
+    set(state => ({
+      timeline: {
+        ...state.timeline,
+        tracks: state.timeline.tracks.map(track => 
+          track.id === trackId 
+            ? {
+                ...track,
+                clips: track.clips.map(clip => 
+                  clip.id === clipId 
+                    ? { ...clip, startTime: Math.max(0, newStartTime) }
+                    : clip
+                )
+              }
+            : track
+        )
+      }
+    }));
+  },
+  
+  // Playback control
   setCurrentTime: (time) => {
     set(state => ({
       timeline: {
@@ -151,6 +190,36 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     }));
   },
   
+  seekForward: (seconds) => {
+    set(state => {
+      const newTime = Math.min(
+        state.timeline.currentTime + seconds,
+        state.timeline.duration
+      );
+      
+      return {
+        timeline: {
+          ...state.timeline,
+          currentTime: newTime,
+        }
+      };
+    });
+  },
+  
+  seekBackward: (seconds) => {
+    set(state => {
+      const newTime = Math.max(state.timeline.currentTime - seconds, 0);
+      
+      return {
+        timeline: {
+          ...state.timeline,
+          currentTime: newTime,
+        }
+      };
+    });
+  },
+  
+  // Loop control
   setLoopPoints: (start, end) => {
     set(state => ({
       timeline: {
@@ -176,6 +245,7 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     }));
   },
   
+  // Timeline presets
   saveTimelinePreset: (name) => {
     const { tracks, duration } = get().timeline;
     
@@ -244,6 +314,31 @@ export const timelineSlice: StateCreator<TimelineSlice> = (set, get) => ({
     set(state => ({
       timelinePresets: state.timelinePresets.filter(p => p.id !== presetId)
     }));
+  },
+  
+  // Timeline visibility
+  toggleTimelineVisibility: () => {
+    // We'll implement this in the UI slice, but add the interface here
+    // This will be used for collapsing/expanding the timeline
+    console.log("Timeline visibility toggled");
+  },
+  
+  // Sound filtering for timeline
+  filterSoundsByType: (type) => {
+    const sounds = get().sounds;
+    if (!type) return sounds;
+    
+    return sounds.filter(sound => sound.type === type);
+  },
+  
+  filterSoundsByName: (name) => {
+    const sounds = get().sounds;
+    if (!name.trim()) return sounds;
+    
+    const lowercaseName = name.toLowerCase();
+    return sounds.filter(sound => 
+      sound.name.toLowerCase().includes(lowercaseName)
+    );
   },
 });
 
