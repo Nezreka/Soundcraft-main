@@ -1,24 +1,58 @@
-@import "tailwindcss";
-
-@theme {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #121212;
+  --surface: #1E1E1E;
+  --primary: #BB86FC;
+  --secondary: #03DAC6;
+  --accent: #CF6679;
+  --text-primary: #E1E1E1;
+  --text-secondary: #B0B0B0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
 }
 
+html,
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  max-width: 100vw;
+  overflow-x: hidden;
+  height: 100%;
+  background-color: var(--background);
+  color: var(--text-primary);
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-surface/60 backdrop-blur-xl border border-white/10 rounded-xl;
+  }
+  
+  .neumorphic {
+    @apply bg-surface shadow-neumorphic rounded-xl;
+  }
+  
+  .neumorphic-inset {
+    @apply bg-surface shadow-neumorphic-inset rounded-xl;
+  }
+  
+  .hover-effect {
+    @apply transition-all duration-300 ease-in-out hover:scale-[1.02] hover:shadow-lg;
+  }
+  
+  .knob {
+    @apply w-16 h-16 rounded-full neumorphic relative cursor-pointer;
+  }
+  
+  .slider-track {
+    @apply h-2 w-full rounded-full neumorphic-inset;
+  }
+  
+  .slider-thumb {
+    @apply w-4 h-4 rounded-full bg-primary shadow-md absolute top-1/2 transform -translate-y-1/2;
+  }
 }
